@@ -1,9 +1,12 @@
 import streamlit as st
 from groq import Groq
 import json
-
+import re
+import os
 
 client = Groq(api_key="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")
+
+
 products = [
     {"id": 1, "name": "iPhone 13", "price": 799},
     {"id": 2, "name": "Samsung Galaxy A52", "price": 499},
@@ -22,7 +25,6 @@ products = [
     {"id": 15, "name": "Motorola Edge 30", "price": 399}
 ]
 
-
 st.title("📱 AI-Powered Product Recommendation System")
 
 user_input = st.text_input("Enter your preference (e.g., phone under $500):")
@@ -30,37 +32,47 @@ user_input = st.text_input("Enter your preference (e.g., phone under $500):")
 if st.button("Get Recommendations"):
     with st.spinner("Fetching recommendations..."):
         prompt = f"""
-        You are a recommendation system.
+        You are a strict JSON API.
         Here is a list of products: {json.dumps(products)}.
         Based on the user preference: "{user_input}",
-        recommend the best matching products.
-
-        ⚠️ IMPORTANT: Only return a valid JSON list, like this:
+        return ONLY a valid JSON array of matching products.
+        
+        Rules:
+        - JSON only, no extra text
+        - Use numbers only for prices (no $ sign)
+        - Example:
         [
           {{"name": "Product A", "price": 123}},
           {{"name": "Product B", "price": 456}}
         ]
-        No explanations, no extra text.
         """
 
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant", 
+                model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0
             )
 
             content = response.choices[0].message.content.strip()
 
-            # Try to parse JSON
-            recommendations = json.loads(content)
+            # Try parsing JSON directly
+            try:
+                recommendations = json.loads(content)
+            except json.JSONDecodeError:
+                # Fallback: extract JSON array using regex
+                match = re.search(r"\[.*\]", content, re.S)
+                if match:
+                    recommendations = json.loads(match.group(0))
+                else:
+                    recommendations = []
 
             if recommendations:
                 st.subheader("✅ Recommended Products:")
                 for r in recommendations:
                     st.write(f"- **{r['name']}** — ${r['price']}")
             else:
-                st.warning("No valid recommendations received. Try again.")
+                st.warning("⚠️ No valid recommendations received. Try again.")
 
         except Exception as e:
             st.error(f"Error: {str(e)}")
