@@ -1,78 +1,101 @@
-import streamlit as st
-from groq import Groq
-import json
-import re
-import os
+# app_phone_agent.py
+import os, re, streamlit as st
+from langchain_groq import ChatGroq
+from langchain_community.utilities import SerpAPIWrapper, WikipediaAPIWrapper
+from langchain_community.tools import WikipediaQueryRun
+from langchain.agents import initialize_agent, AgentType, Tool
+from langchain.callbacks import StreamlitCallbackHandler
+from langchain.memory import ConversationBufferMemory
 
-client = Groq(api_key="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")
+st.set_page_config(layout="wide")
+st.title("📱 Phone Assistant — live price, specs, reviews (Safer search)")
 
 
-products = [
-    {"id": 1, "name": "iPhone 13", "price": 799},
-    {"id": 2, "name": "Samsung Galaxy A52", "price": 499},
-    {"id": 3, "name": "OnePlus Nord", "price": 399},
-    {"id": 4, "name": "Google Pixel 6", "price": 599},
-    {"id": 5, "name": "Xiaomi Redmi Note 10", "price": 299},
-    {"id": 6, "name": "iPhone SE (2022)", "price": 429},
-    {"id": 7, "name": "Samsung Galaxy S21", "price": 699},
-    {"id": 8, "name": "OnePlus 10 Pro", "price": 899},
-    {"id": 9, "name": "Google Pixel 7a", "price": 499},
-    {"id": 10, "name": "Xiaomi Mi 11 Lite", "price": 349},
-    {"id": 11, "name": "Realme GT Neo 3", "price": 450},
-    {"id": 12, "name": "Poco X3 Pro", "price": 299},
-    {"id": 13, "name": "iPhone 14 Pro", "price": 999},
-    {"id": 14, "name": "Samsung Galaxy Z Flip 4", "price": 999},
-    {"id": 15, "name": "Motorola Edge 30", "price": 399}
+
+# --- Tools setup
+# SerpAPIWrapper: restrict to India & Google domain to improve relevancy
+serp = SerpAPIWrapper(
+    serpapi_api_key="87cb4e33fcdca8c8ea31baec031483c890260fe2be830e4a60e5f793896bfa7c",
+    params={"engine": "google", "gl": "IN", "google_domain": "google.co.in", "hl": "en"}
+)
+
+wiki_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=800)
+wiki_run = WikipediaQueryRun(api_wrapper=wiki_wrapper)
+
+# --- Safety helpers
+BLACKLIST = {"porn", "xxx", "adult", "sex", "escort", "s-x"}  # add more as needed
+def is_safe_text(txt: str) -> bool:
+    t = (txt or "").lower()
+    return not any(b in t for b in BLACKLIST)
+
+def rewrite_query(q: str) -> str:
+    ql = q.lower()
+    # handle budget queries like "under 20000 rupees" or "below 20000"
+    if ("under" in ql or "below" in ql) and ("rupee" in ql or "inr" in ql or "₹" in ql):
+        # add locality, currency, year, and keywords to make search more precise
+        return f"{q} best smartphones under 20000 INR India price reviews 2025"
+    # general enhancement
+    return q + " price reviews specs India 2025"
+
+# --- Tool wrappers (LangChain Tool interface expects a callable that takes a string)
+def serp_search_tool(query: str) -> str:
+    q = rewrite_query(query)
+    try:
+        out = serp.run(q)  # returns text snippet(s)
+    except Exception as e:
+        return f"SerpAPI error: {e}"
+    # very small safety filter
+    if not is_safe_text(out):
+        return "No safe results found."
+    return out
+
+def wiki_specs_tool(query: str) -> str:
+    # expects phone model name; WikipediaQueryRun returns string
+    try:
+        return wiki_run.run(query)
+    except Exception as e:
+        return f"Wikipedia error: {e}"
+
+# convert to LangChain Tool objects
+tools = [
+    Tool(
+        name="SerpSearch",
+        func=serp_search_tool,
+        description="Use for live price and reviews searches. Good for queries like 'phones under 20000 rupees' or 'iPhone 13 price India'."
+    ),
+    Tool(
+        name="WikiSpecs",
+        func=wiki_specs_tool,
+        description="Use to fetch phone specifications from Wikipedia (camera, battery, display, storage)."
+    ),
 ]
 
-st.title("📱 AI-Powered Product Recommendation System")
+# --- LLM & agent
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+llm = ChatGroq(groq_api_key="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", model_name="gemma2-9b-it", streaming=True)  # adjust model_name per your account
+agent = initialize_agent(
+    tools,
+    llm,
+    agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
+    memory=memory,
+    handle_parsing_errors=True
+)
 
-user_input = st.text_input("Enter your preference (e.g., phone under $500):")
+# --- Chat UI
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hi — ask me for phone prices, specs, or reviews (India-focused)."}]
 
-if st.button("Get Recommendations"):
-    with st.spinner("Fetching recommendations..."):
-        prompt = f"""
-        You are a strict JSON API.
-        Here is a list of products: {json.dumps(products)}.
-        Based on the user preference: "{user_input}",
-        return ONLY a valid JSON array of matching products.
-        
-        Rules:
-        - JSON only, no extra text
-        - Use numbers only for prices (no $ sign)
-        - Example:
-        [
-          {{"name": "Product A", "price": 123}},
-          {{"name": "Product B", "price": 456}}
-        ]
-        """
+for m in st.session_state.messages:
+    st.chat_message(m["role"]).write(m["content"])
 
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0
-            )
+if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").write(prompt)
+    with st.chat_message("assistant"):
+        st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
+        # The agent decides which tool to use (SerpSearch or WikiSpecs)
+        response = agent.run(prompt, callbacks=[st_cb])
+        if response:
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            st.chat_message("assistant").write(response)
 
-            content = response.choices[0].message.content.strip()
-
-            # Try parsing JSON directly
-            try:
-                recommendations = json.loads(content)
-            except json.JSONDecodeError:
-                # Fallback: extract JSON array using regex
-                match = re.search(r"\[.*\]", content, re.S)
-                if match:
-                    recommendations = json.loads(match.group(0))
-                else:
-                    recommendations = []
-
-            if recommendations:
-                st.subheader("✅ Recommended Products:")
-                for r in recommendations:
-                    st.write(f"- **{r['name']}** — ${r['price']}")
-            else:
-                st.warning("⚠️ No valid recommendations received. Try again.")
-
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
