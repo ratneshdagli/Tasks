@@ -15,7 +15,7 @@ st.title("📱 Phone Assistant — live price, specs, reviews (Safer search)")
 # --- Tools setup
 # SerpAPIWrapper: restrict to India & Google domain to improve relevancy
 serp = SerpAPIWrapper(
-    serpapi_api_key="87cb4e33fcdca8c8ea31baec031483c890260fe2be830e4a60e5f793896bfa7c",
+    serpapi_api_key="",
     params={"engine": "google", "gl": "IN", "google_domain": "google.co.in", "hl": "en"}
 )
 
@@ -98,4 +98,5 @@ if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')
         if response:
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.chat_message("assistant").write(response)
+
 
