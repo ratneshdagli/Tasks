@@ -12,7 +12,7 @@ st.set_page_config(layout="wide")
 st.title("📱 Phone Assistant — live price, specs, and images")
 
 # ---------------- API Keys ----------------
-# Store your API keys safely (set them in Streamlit Cloud secrets or .env locally)
+# Store API keys in .env or Streamlit secrets
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 SERPAPI_KEY = os.getenv("SERPAPI_API_KEY", "")
 
@@ -51,7 +51,7 @@ serp_images = SerpAPIWrapper(
 )
 
 def phone_image_tool(query: str) -> str:
-    """Fetch top 3 phone images"""
+    """Fetch top 3 phone images and return direct URLs"""
     try:
         results = serp_images.results(query + " smartphone India")
         images = results.get("images_results", [])
@@ -59,7 +59,7 @@ def phone_image_tool(query: str) -> str:
             return "No images found."
         urls = [img.get("original") or img.get("thumbnail") for img in images[:3]]
         urls = [u for u in urls if u]
-        return "\n".join(urls)
+        return "\n".join(urls)  # Agent output
     except Exception as e:
         return f"Image search error: {e}"
 
@@ -114,16 +114,19 @@ if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')
         response = agent.run(prompt, callbacks=[st_cb])
 
         if response:
+            # Save agent response
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.chat_message("assistant").write(response)
 
-            # Show images if URLs detected
+            # --- EXTRA: Extract and show images ---
             urls = re.findall(r'(https?://\S+)', response)
             img_urls = [u for u in urls if any(ext in u.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])]
             if img_urls:
                 st.write("📸 Images:")
-                for u in img_urls:
+                cols = st.columns(len(img_urls))
+                for i, u in enumerate(img_urls):
                     try:
-                        st.image(u, width=250)
+                        with cols[i]:
+                            st.image(u, width=250)
                     except:
                         st.write(f"⚠️ Could not load image: {u}")
