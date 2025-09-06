@@ -6,70 +6,37 @@ from langchain_community.tools import WikipediaQueryRun
 from langchain.agents import initialize_agent, AgentType, Tool
 from langchain.callbacks import StreamlitCallbackHandler
 from langchain.memory import ConversationBufferMemory
-from langchain_community.utilities import SerpAPIWrapper
-import requests
 
-# -------------------
-# Streamlit UI setup
-# -------------------
+# ---------------- Streamlit UI ----------------
 st.set_page_config(layout="wide")
-st.title("📱 Phone Assistant — Live Price, Specs & Images")
+st.title("📱 Phone Assistant — live price, specs, and images")
 
-# -------------------
-# Tools setup
-# -------------------
+# ---------------- API Keys ----------------
+# Store your API keys safely (set them in Streamlit Cloud secrets or .env locally)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+SERPAPI_KEY = os.getenv("SERPAPI_API_KEY", "")
 
-# Text search: Google search for price/reviews
+if not SERPAPI_KEY:
+    st.warning("⚠️ Missing SerpAPI Key! Add it in your .env or Streamlit secrets.")
+if not GROQ_API_KEY:
+    st.warning("⚠️ Missing Groq API Key! Add it in your .env or Streamlit secrets.")
+
+# ---------------- Tools Setup ----------------
+# SerpAPI text search (Google)
 serp_text = SerpAPIWrapper(
-    serpapi_api_key="",  # 🔑 Put your SERPAPI key here
+    serpapi_api_key=SERPAPI_KEY,
     params={"engine": "google", "gl": "IN", "google_domain": "google.co.in", "hl": "en"}
 )
 
-# Image search (JSON instead of text)
-serp_images = SerpAPIWrapper(
-    serpapi_api_key=os.getenv("SERPAPI_API_KEY", ""),  # keep in secrets
-    params={"engine": "google_images", "gl": "IN", "hl": "en"}
-)
+def serp_search_tool(query: str) -> str:
+    try:
+        return serp_text.run(query + " India 2025 price reviews specs")
+    except Exception as e:
+        return f"SerpAPI text search error: {e}"
 
-# Wikipedia for specs
+# Wikipedia for specifications
 wiki_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=800)
 wiki_run = WikipediaQueryRun(api_wrapper=wiki_wrapper)
-
-# Safety filter (block unsafe results)
-BLACKLIST = {"porn", "xxx", "adult", "sex", "escort"}
-def is_safe_text(txt: str) -> bool:
-    return not any(b in (txt or "").lower() for b in BLACKLIST)
-
-# Helper to improve queries
-def rewrite_query(q: str) -> str:
-    ql = q.lower()
-    if ("under" in ql or "below" in ql) and ("rupee" in ql or "inr" in ql or "₹" in ql):
-        return f"{q} best smartphones under 20000 INR India price reviews 2025"
-    return q + " price reviews specs India 2025"
-
-# Tool functions
-def serp_search_tool(query: str) -> str:
-    q = rewrite_query(query)
-    try:
-        out = serp_text.run(q)
-    except Exception as e:
-        return f"SerpAPI error: {e}"
-    return out if is_safe_text(out) else "No safe results found."
-
-def phone_image_tool(query: str) -> str:
-    try:
-        # Get raw JSON results instead of text
-        results = serp_images.results(query + " smartphone India")
-        images = results.get("images_results", [])
-        if not images:
-            return "No images found."
-        
-        # Extract top 3 image URLs
-        urls = [img.get("original") or img.get("thumbnail") for img in images[:3]]
-        urls = [u for u in urls if u]  # filter None
-        return "\n".join(urls)
-    except Exception as e:
-        return f"Image search error: {e}"
 
 def wiki_specs_tool(query: str) -> str:
     try:
@@ -77,30 +44,47 @@ def wiki_specs_tool(query: str) -> str:
     except Exception as e:
         return f"Wikipedia error: {e}"
 
-# LangChain tools
+# SerpAPI image search
+serp_images = SerpAPIWrapper(
+    serpapi_api_key=SERPAPI_KEY,
+    params={"engine": "google_images", "gl": "IN", "hl": "en"}
+)
+
+def phone_image_tool(query: str) -> str:
+    """Fetch top 3 phone images"""
+    try:
+        results = serp_images.results(query + " smartphone India")
+        images = results.get("images_results", [])
+        if not images:
+            return "No images found."
+        urls = [img.get("original") or img.get("thumbnail") for img in images[:3]]
+        urls = [u for u in urls if u]
+        return "\n".join(urls)
+    except Exception as e:
+        return f"Image search error: {e}"
+
+# Tools list
 tools = [
     Tool(
         name="SerpSearch",
         func=serp_search_tool,
-        description="Use for live price and reviews searches. E.g. 'phones under 20000 rupees' or 'iPhone 13 price India'."
+        description="Use for live price and reviews searches. Example: 'phones under 20000 rupees'"
     ),
     Tool(
         name="WikiSpecs",
         func=wiki_specs_tool,
-        description="Use to fetch phone specifications from Wikipedia (camera, battery, display, storage)."
+        description="Use to fetch phone specifications (camera, battery, display, storage)."
     ),
     Tool(
-        name="PhoneImage",
+        name="PhoneImages",
         func=phone_image_tool,
-        description="Use to fetch an image of a phone. Input should be the phone model name."
+        description="Use to fetch phone images. Example: 'show me images of iPhone 13'"
     ),
 ]
 
-# -------------------
-# LLM & Agent setup
-# -------------------
+# ---------------- LLM & Agent ----------------
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-llm = ChatGroq(groq_api_key="", model_name="gemma2-9b-it", streaming=True)  # 🔑 Groq API key here
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name="gemma2-9b-it", streaming=True)
 
 agent = initialize_agent(
     tools,
@@ -110,15 +94,17 @@ agent = initialize_agent(
     handle_parsing_errors=True
 )
 
-# -------------------
-# Chat UI
-# -------------------
+# ---------------- Chat UI ----------------
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hi — ask me for phone prices, specs, or images (India-focused)."}]
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hi 👋 — ask me for phone prices, specs, or images (India-focused)."}
+    ]
 
+# Display chat history
 for m in st.session_state.messages:
     st.chat_message(m["role"]).write(m["content"])
 
+# Handle user input
 if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
@@ -131,12 +117,13 @@ if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.chat_message("assistant").write(response)
 
-    # --- Show images if URLs present ---
+            # Show images if URLs detected
             urls = re.findall(r'(https?://\S+)', response)
-            img_urls = [u for u in urls if any(u.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"])]
-            for u in img_urls:
-                try:
-                    st.image(u, width=250)
-                except:
-                    pass
-
+            img_urls = [u for u in urls if any(ext in u.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])]
+            if img_urls:
+                st.write("📸 Images:")
+                for u in img_urls:
+                    try:
+                        st.image(u, width=250)
+                    except:
+                        st.write(f"⚠️ Could not load image: {u}")
