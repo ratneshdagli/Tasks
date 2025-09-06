@@ -72,7 +72,7 @@ tools = [
 
 # --- LLM & agent
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-llm = ChatGroq(groq_api_key="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", model_name="gemma2-9b-it", streaming=True)  # adjust model_name per your account
+llm = ChatGroq(groq_api_key="", model_name="gemma2-9b-it", streaming=True)  # adjust model_name per your account
 agent = initialize_agent(
     tools,
     llm,
@@ -98,5 +98,6 @@ if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')
         if response:
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.chat_message("assistant").write(response)
+
 
 
