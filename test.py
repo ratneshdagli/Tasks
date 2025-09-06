@@ -6,6 +6,8 @@ from langchain_community.tools import WikipediaQueryRun
 from langchain.agents import initialize_agent, AgentType, Tool
 from langchain.callbacks import StreamlitCallbackHandler
 from langchain.memory import ConversationBufferMemory
+from langchain_community.utilities import SerpAPIWrapper
+import requests
 
 # -------------------
 # Streamlit UI setup
@@ -23,9 +25,9 @@ serp_text = SerpAPIWrapper(
     params={"engine": "google", "gl": "IN", "google_domain": "google.co.in", "hl": "en"}
 )
 
-# Image search: Google Images
+# Image search (JSON instead of text)
 serp_images = SerpAPIWrapper(
-    serpapi_api_key="",  # 🔑 Put your SERPAPI key here
+    serpapi_api_key=os.getenv("SERPAPI_API_KEY", ""),  # keep in secrets
     params={"engine": "google_images", "gl": "IN", "hl": "en"}
 )
 
@@ -56,8 +58,16 @@ def serp_search_tool(query: str) -> str:
 
 def phone_image_tool(query: str) -> str:
     try:
-        result = serp_images.run(query + " smartphone India")
-        return result
+        # Get raw JSON results instead of text
+        results = serp_images.results(query + " smartphone India")
+        images = results.get("images_results", [])
+        if not images:
+            return "No images found."
+        
+        # Extract top 3 image URLs
+        urls = [img.get("original") or img.get("thumbnail") for img in images[:3]]
+        urls = [u for u in urls if u]  # filter None
+        return "\n".join(urls)
     except Exception as e:
         return f"Image search error: {e}"
 
@@ -121,8 +131,12 @@ if prompt := st.chat_input("Ask about phones (e.g., 'phones under 20000 rupees')
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.chat_message("assistant").write(response)
 
-            # Extract and display image URLs (basic check)
+    # --- Show images if URLs present ---
             urls = re.findall(r'(https?://\S+)', response)
-            for url in urls:
-                if any(url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                    st.image(url, width=250)
+            img_urls = [u for u in urls if any(u.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"])]
+            for u in img_urls:
+                try:
+                    st.image(u, width=250)
+                except:
+                    pass
+
